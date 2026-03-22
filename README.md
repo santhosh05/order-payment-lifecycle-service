@@ -104,6 +104,7 @@ Schema is created automatically by Hibernate on startup.
 - Runtime OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 - Static OpenAPI file: `docs/api/openapi.yaml`
 - Postman collection: `docs/api/postman_collection.json`
+- Published Postman docs: https://documenter.getpostman.com/view/17659078/2sBXijJWtp
 
 ## API Endpoints
 
