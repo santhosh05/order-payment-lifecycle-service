@@ -1,0 +1,591 @@
+openapi: 3.0.3
+info:
+  title: Order Payment Lifecycle Service API
+  version: "1.0.0"
+  description: |
+    Backend service that manages the complete lifecycle of order payments.
+
+    **Payment Lifecycle:**
+    `ORDER_CREATED → AUTHORIZED → CAPTURED → PARTIALLY_REFUNDED / FULLY_REFUNDED`
+
+    **Business Rules:**
+    - Capture is allowed only after successful authorization
+    - Refund amount cannot exceed captured amount
+    - Double capture is prevented
+    - All write APIs support idempotency via the `Idempotency-Key` header
+    - Reconciliation is computed using restaurant timezone
+
+    **Idempotency:**
+    All mutation endpoints require an `Idempotency-Key` header. Reusing a key with the same payload replays the cached response. Reusing a key with a different payload returns `422 Unprocessable Entity`.
+
+    **Monetary Values:**
+    All amounts are in the smallest currency unit (e.g. paise for INR, cents for USD).
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Restaurant
+    description: Restaurant management
+  - name: Order
+    description: Order creation and details
+  - name: Payment
+    description: Payment authorization, capture, and refund
+  - name: Reconciliation
+    description: Daily reconciliation reports
+
+paths:
+  /api/restaurants:
+    post:
+      tags: [Restaurant]
+      summary: Create restaurant
+      operationId: createRestaurant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRestaurantRequest'
+      responses:
+        "201":
+          description: Restaurant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantResponse'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/restaurants/{restaurantId}:
+    get:
+      tags: [Restaurant]
+      summary: Get restaurant
+      operationId: getRestaurant
+      parameters:
+        - in: path
+          name: restaurantId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Restaurant details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantResponse'
+        "404":
+          description: Restaurant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api:
+    post:
+      tags: [Order]
+      summary: Create order
+      operationId: createOrder
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        "400":
+          description: Validation error or missing Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Restaurant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Concurrent request with same idempotency key in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Idempotency key reused with different payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/{orderId}:
+    get:
+      tags: [Order]
+      summary: Fetch order with full payment history
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        "200":
+          description: Order details with payment snapshot and event history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetailsResponse'
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/{orderId}/payments/authorize:
+    post:
+      tags: [Payment]
+      summary: Authorize payment
+      description: |
+        Authorizes a payment for the given order. Authorization amount must match the order amount.
+        Only allowed when order status is `ORDER_CREATED`.
+      operationId: authorizePayment
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizePaymentRequest'
+      responses:
+        "200":
+          description: Payment authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentActionResponse'
+        "400":
+          description: Validation error, amount mismatch, or missing Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Payment already exists or concurrent request in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Idempotency key reused with different payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/{orderId}/payments/capture:
+    post:
+      tags: [Payment]
+      summary: Capture payment
+      description: |
+        Captures an authorized payment. Capture amount must not exceed authorized amount.
+        Double capture is prevented. Only allowed when payment status is `AUTHORIZED`.
+      operationId: capturePayment
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapturePaymentRequest'
+      responses:
+        "200":
+          description: Payment captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentActionResponse'
+        "400":
+          description: Capture amount exceeds authorized amount or missing Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Capture not allowed (not authorized, already captured, or concurrent conflict)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Idempotency key reused with different payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/{orderId}/payments/refund:
+    post:
+      tags: [Payment]
+      summary: Refund payment
+      description: |
+        Refunds a captured payment (partial or full). Refund amount cannot exceed
+        the remaining refundable amount (captured - already refunded).
+        Only allowed when payment status is `CAPTURED` or `PARTIALLY_REFUNDED`.
+      operationId: refundPayment
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundPaymentRequest'
+      responses:
+        "200":
+          description: Payment refunded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentActionResponse'
+        "400":
+          description: Refund amount exceeds captured amount or missing Idempotency-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Refund not allowed (not captured or concurrent conflict)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Idempotency key reused with different payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/reconciliation/daily:
+    get:
+      tags: [Reconciliation]
+      summary: Generate daily reconciliation report
+      description: |
+        Generates a reconciliation report for a specific restaurant and date.
+        The day boundaries are computed using the restaurant's timezone.
+      operationId: getDailyReconciliation
+      parameters:
+        - in: query
+          name: date
+          required: true
+          description: Business date in restaurant timezone (ISO 8601)
+          schema:
+            type: string
+            format: date
+            example: "2026-03-22"
+        - in: query
+          name: restaurantId
+          required: true
+          schema:
+            type: string
+            example: "rest-001"
+      responses:
+        "200":
+          description: Daily reconciliation report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResponse'
+        "404":
+          description: Restaurant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  parameters:
+    OrderId:
+      in: path
+      name: orderId
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUID of the order
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+      description: Unique key for idempotent request handling
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+      example:
+        error: "Order not found"
+
+    CreateRestaurantRequest:
+      type: object
+      required: [restaurantId, name, timezone, defaultCurrency]
+      properties:
+        restaurantId:
+          type: string
+          example: "rest-001"
+        name:
+          type: string
+          example: "Spice Hub"
+        timezone:
+          type: string
+          description: IANA timezone identifier
+          example: "Asia/Kolkata"
+        defaultCurrency:
+          type: string
+          description: ISO 4217 currency code (exactly 3 characters)
+          minLength: 3
+          maxLength: 3
+          example: "INR"
+
+    RestaurantResponse:
+      type: object
+      properties:
+        restaurantId:
+          type: string
+        name:
+          type: string
+        timezone:
+          type: string
+        defaultCurrency:
+          type: string
+
+    CreateOrderRequest:
+      type: object
+      required: [restaurantId, orderAmount]
+      properties:
+        restaurantId:
+          type: string
+          example: "rest-001"
+        orderAmount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Order amount in smallest currency unit
+          example: 1000
+
+    OrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        restaurantId:
+          type: string
+        restaurantTimezone:
+          type: string
+        currency:
+          type: string
+        orderAmount:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [ORDER_CREATED, PAYMENT_AUTHORIZED, PAYMENT_CAPTURED, PARTIALLY_REFUNDED, FULLY_REFUNDED, PAYMENT_FAILED]
+
+    AuthorizePaymentRequest:
+      type: object
+      required: [amount, paymentMethod]
+      properties:
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Must match the order amount
+          example: 1000
+        paymentMethod:
+          type: string
+          example: "CARD"
+
+    CapturePaymentRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Must not exceed authorized amount
+          example: 1000
+
+    RefundPaymentRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Must not exceed remaining refundable amount
+          example: 200
+        reason:
+          type: string
+          description: Reason for refund
+          example: "customer request"
+
+    PaymentActionResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        paymentId:
+          type: string
+          format: uuid
+        paymentStatus:
+          type: string
+          enum: [AUTHORIZED, CAPTURED, PARTIALLY_REFUNDED, FULLY_REFUNDED, AUTHORIZATION_FAILED]
+        authorizedAmount:
+          type: integer
+          format: int64
+        capturedAmount:
+          type: integer
+          format: int64
+        refundedAmount:
+          type: integer
+          format: int64
+        version:
+          type: integer
+          format: int64
+          description: Optimistic lock version
+
+    PaymentSnapshot:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [AUTHORIZED, CAPTURED, PARTIALLY_REFUNDED, FULLY_REFUNDED, AUTHORIZATION_FAILED]
+        authorizedAmount:
+          type: integer
+          format: int64
+        capturedAmount:
+          type: integer
+          format: int64
+        refundedAmount:
+          type: integer
+          format: int64
+        version:
+          type: integer
+          format: int64
+
+    PaymentEventResponse:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum: [AUTHORIZED, CAPTURED, REFUNDED, AUTHORIZATION_FAILED, CAPTURE_FAILED, REFUND_FAILED]
+        amount:
+          type: integer
+          format: int64
+        gatewayReference:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    OrderDetailsResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ORDER_CREATED, PAYMENT_AUTHORIZED, PAYMENT_CAPTURED, PARTIALLY_REFUNDED, FULLY_REFUNDED, PAYMENT_FAILED]
+        restaurantId:
+          type: string
+        restaurantTimezone:
+          type: string
+        currency:
+          type: string
+        orderAmount:
+          type: integer
+          format: int64
+        payment:
+          $ref: '#/components/schemas/PaymentSnapshot'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentEventResponse'
+
+    ReconciliationResponse:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        restaurantId:
+          type: string
+        restaurantTimezone:
+          type: string
+        ordersCreated:
+          type: integer
+          format: int64
+        authorizedAmount:
+          type: integer
+          format: int64
+        capturedAmount:
+          type: integer
+          format: int64
+        refundedAmount:
+          type: integer
+          format: int64
+        netCollected:
+          type: integer
+          format: int64
+          description: capturedAmount - refundedAmount
+        failedAuthCount:
+          type: integer
+          format: int64
+        failedCaptureCount:
+          type: integer
+          format: int64

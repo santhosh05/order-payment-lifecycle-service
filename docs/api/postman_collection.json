@@ -1,0 +1,340 @@
+{
+  "info": {
+    "name": "Order Payment Lifecycle Service",
+    "_postman_id": "6dcf8ec8-6cc0-4f28-a34d-3aeb1113d7be",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "API collection for order payment lifecycle flows.\n\nAll mutation endpoints require an Idempotency-Key header.\nAll monetary amounts are in the smallest currency unit (e.g. paise for INR, cents for USD)."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "restaurantId",
+      "value": "rest-001"
+    }
+  ],
+  "item": [
+    {
+      "name": "Restaurant",
+      "item": [
+        {
+          "name": "Create Restaurant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"restaurantId\": \"{{restaurantId}}\",\n  \"name\": \"Spice Hub\",\n  \"timezone\": \"Asia/Kolkata\",\n  \"defaultCurrency\": \"INR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/restaurants",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "restaurants"]
+            },
+            "description": "Create a new restaurant with timezone and default currency."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.restaurantId) {",
+                  "  pm.collectionVariables.set('restaurantId', response.restaurantId);",
+                  "}",
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Restaurant",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/restaurants/{{restaurantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "restaurants", "{{restaurantId}}"]
+            },
+            "description": "Fetch restaurant details by ID."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has restaurantId', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.restaurantId).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Order",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "order-{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"restaurantId\": \"{{restaurantId}}\",\n  \"orderAmount\": 1000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api",
+              "host": ["{{baseUrl}}"],
+              "path": ["api"]
+            },
+            "description": "Create a new order for a restaurant. Requires Idempotency-Key header."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.orderId) {",
+                  "  pm.collectionVariables.set('orderId', response.orderId);",
+                  "}",
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Status is ORDER_CREATED', () => {",
+                  "  pm.expect(response.status).to.eql('ORDER_CREATED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Order",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/{{orderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "{{orderId}}"]
+            },
+            "description": "Fetch order details with payment snapshot and full event history."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has orderId', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.orderId).to.not.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment",
+      "item": [
+        {
+          "name": "Authorize Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "auth-{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000,\n  \"paymentMethod\": \"CARD\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/{{orderId}}/payments/authorize",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "{{orderId}}", "payments", "authorize"]
+            },
+            "description": "Authorize payment for an order. Amount must match the order amount."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Payment is AUTHORIZED', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.paymentStatus).to.eql('AUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "capture-{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/{{orderId}}/payments/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "{{orderId}}", "payments", "capture"]
+            },
+            "description": "Capture an authorized payment. Amount must not exceed authorized amount. Double capture is prevented."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Payment is CAPTURED', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.paymentStatus).to.eql('CAPTURED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refund Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "refund-{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 200,\n  \"reason\": \"customer request\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/{{orderId}}/payments/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "{{orderId}}", "payments", "refund"]
+            },
+            "description": "Refund a captured payment (partial or full). Amount must not exceed remaining refundable amount."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Payment status is refunded', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(['PARTIALLY_REFUNDED', 'FULLY_REFUNDED']).to.include(body.paymentStatus);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reconciliation",
+      "item": [
+        {
+          "name": "Daily Reconciliation",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/reconciliation/daily?date=2026-03-22&restaurantId={{restaurantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "reconciliation", "daily"],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "2026-03-22",
+                  "description": "Business date (ISO 8601) in restaurant timezone"
+                },
+                {
+                  "key": "restaurantId",
+                  "value": "{{restaurantId}}"
+                }
+              ]
+            },
+            "description": "Generate daily reconciliation report. Day boundaries are computed using the restaurant's timezone."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has netCollected', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.netCollected).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
